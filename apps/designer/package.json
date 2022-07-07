@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "description": "Webstudio Designer UI as a service",
   "scripts": {
-    "build": "remix build",
+    "build": "remix build && yarn build:rollup",
+    "build:rollup": "rollup -c",
     "dev": "npm-run-all --parallel storybook:run watch:remix",
     "start": "remix-serve build",
     "typecheck": "tsc -b",
