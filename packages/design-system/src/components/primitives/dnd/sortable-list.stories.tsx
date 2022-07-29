@@ -4,7 +4,8 @@ import { Box } from "../../box";
 import { styled } from "../../../stitches.config";
 import { useDropTarget } from "./use-drop-target";
 import { useDrag } from "./use-drag";
-import { usePlacement, PlacementIndicator, type Rect } from "./placement";
+import { type Rect } from "./rect";
+import { usePlacement, PlacementIndicator } from "./placement";
 import { useAutoScroll } from "./use-auto-scroll";
 
 type ItemData = { id: string; text: string };
@@ -70,23 +71,22 @@ export const SortableList = ({
 
   const [dragItemId, setDragItemId] = useState<string>();
 
-  const dropTargetHandlers = useDropTarget({
+  const dropTargetHandlers = useDropTarget<true>({
     isDropTarget(element: HTMLElement) {
       return element instanceof HTMLUListElement;
     },
     onDropTargetChange(event) {
-      placementHandlers.handleTargetChange(event.target);
+      placementHandlers.handleTargetChange(event.element);
     },
   });
 
   const autoScrollHandlers = useAutoScroll();
 
-  const dragProps = useDrag({
+  const useDragHandlers = useDrag({
+    isDragItem(element) {
+      return element instanceof HTMLLIElement;
+    },
     onStart(event) {
-      if (!(event.target instanceof HTMLLIElement)) {
-        event.cancel();
-        return;
-      }
       setDragItemId(event.target.dataset.id);
       autoScrollHandlers.setEnabled(true);
     },
@@ -148,10 +148,12 @@ export const SortableList = ({
           dropTargetHandlers.handleScroll();
           placementHandlers.handleScroll();
         }}
-        {...dragProps}
       >
         <List
-          ref={dropTargetHandlers.rootRef}
+          ref={(element) => {
+            dropTargetHandlers.rootRef(element);
+            useDragHandlers.rootRef(element);
+          }}
           css={{
             li: { cursor: dragItemId === undefined ? "grab" : "default" },
             display: direction === "vertical" ? "block" : "flex",

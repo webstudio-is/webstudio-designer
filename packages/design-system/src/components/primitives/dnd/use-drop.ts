@@ -1,57 +1,48 @@
 import { useRef, useMemo } from "react";
 import { isEqualRect } from "./rect";
 
-export type Area = "top" | "right" | "bottom" | "left" | "center";
-
 export type DropTarget<Data> = {
   data: Data;
-  element: HTMLElement;
+  target: Element;
   rect: DOMRect;
 };
 
 // We pass around data, to avoid extra data lookups.
 // For example, data found in isDropTarget
 // doesn't have to be looked up again in swapDropTarget.
-export type UseDropTargetProps<Data> = {
+export type UseDropProps<Data> = {
   // To check that the element can qualify as a target
-  isDropTarget: (element: HTMLElement) => Data | false;
+  isDropTarget: (target: Element) => Data | false;
 
   // Given the potential target that has passed isDropTarget check,
   // and the position of the pointer on the target,
   // you can swap to another target
-  swapDropTarget?: (args: { element: HTMLElement; data: Data; area: Area }) => {
-    element: HTMLElement;
+  swapDropTarget?: (args: { target: Element; data: Data; onEdge: boolean }) => {
+    target: Element;
     data: Data;
   };
 
   onDropTargetChange: (dropTarget: DropTarget<Data>) => void;
   edgeDistanceThreshold?: number;
-
-  // @todo: not sure we should do any data comparisons here.
-  // On the contrary, we may want to rely on the assumption
-  // that the data for the same element is always the same (for caching)
-  isSameData?: (data1: Data, data2: Data) => boolean;
 };
 
-export type UseDropTargetHandlers = {
-  handleMove: (pointerCoordinate: Coordinate) => void;
+export type UseDropHandlers = {
+  handleMove: (pointerCoordinate: { x: number; y: number }) => void;
   handleScroll: () => void;
   handleEnd: () => void;
-  rootRef: (element: HTMLElement | null) => void;
+  rootRef: (target: Element | null) => void;
 };
 
-export const useDropTarget = <Data>(
-  props: UseDropTargetProps<Data>
-): UseDropTargetHandlers => {
+export const useDrop = <Data>(props: UseDropProps<Data>): UseDropHandlers => {
   // We want to use fresh props every time we use them,
   // but we don't need to react to updates.
   // So we can put them in a ref and make useMemo below very efficient.
-  const latestProps = useRef<UseDropTargetProps<Data>>(props);
+  const latestProps = useRef<UseDropProps<Data>>(props);
   latestProps.current = props;
 
   const state = useRef({
-    root: null as HTMLElement | null,
-    pointerCoordinate: undefined as Coordinate | undefined,
+    root: null as Element | null,
+    pointerCoordinate: undefined as { x: number; y: number } | undefined,
     dropTarget: undefined as DropTarget<Data> | undefined,
   });
 
@@ -60,7 +51,6 @@ export const useDropTarget = <Data>(
     const detectTarget = () => {
       const {
         edgeDistanceThreshold = 3,
-        isSameData = (data1: Data, data2: Data) => data1 === data2,
         isDropTarget,
         swapDropTarget = (args) => args,
         onDropTargetChange,
@@ -71,8 +61,11 @@ export const useDropTarget = <Data>(
         return;
       }
 
-      const target = elementFromPoint(pointerCoordinate);
-      if (target === undefined) {
+      const target = document.elementFromPoint(
+        pointerCoordinate.x,
+        pointerCoordinate.y
+      );
+      if (!target) {
         return;
       }
 
@@ -91,34 +84,33 @@ export const useDropTarget = <Data>(
 
       const dropTarget = {
         ...potentialTarget,
-        rect: potentialTarget.element.getBoundingClientRect(),
+        rect: potentialTarget.target.getBoundingClientRect(),
       };
 
       // eslint-disable-next-line no-constant-condition
       while (true) {
         const swappedTarget = swapDropTarget({
-          element: dropTarget.element,
+          target: dropTarget.target,
           data: dropTarget.data,
-          area: getArea(
+          onEdge: isOnEdge(
             pointerCoordinate,
             edgeDistanceThreshold,
             dropTarget.rect
           ),
         });
 
-        if (swappedTarget.element === dropTarget.element) {
+        if (swappedTarget.target === dropTarget.target) {
           break;
         }
 
-        dropTarget.element = swappedTarget.element;
+        dropTarget.target = swappedTarget.target;
         dropTarget.data = swappedTarget.data;
-        dropTarget.rect = swappedTarget.element.getBoundingClientRect();
+        dropTarget.rect = swappedTarget.target.getBoundingClientRect();
       }
 
       if (
         state.current.dropTarget === undefined ||
-        state.current.dropTarget.element !== dropTarget.element ||
-        !isSameData(state.current.dropTarget.data, dropTarget.data) ||
+        state.current.dropTarget.target !== dropTarget.target ||
         !isEqualRect(state.current.dropTarget.rect, dropTarget.rect)
       ) {
         state.current.dropTarget = dropTarget;
@@ -127,7 +119,7 @@ export const useDropTarget = <Data>(
     };
 
     return {
-      handleMove(pointerCoordinate: Coordinate) {
+      handleMove(pointerCoordinate: { x: number; y: number }) {
         state.current.pointerCoordinate = pointerCoordinate;
         detectTarget();
       },
@@ -141,40 +133,24 @@ export const useDropTarget = <Data>(
         state.current.dropTarget = undefined;
       },
 
-      rootRef(rootElement: HTMLElement | null) {
+      rootRef(rootElement: Element | null) {
         state.current.root = rootElement;
       },
     };
   }, []);
 };
 
-type Coordinate = { x: number; y: number };
-
-const elementFromPoint = (coordinate: Coordinate): HTMLElement | undefined => {
-  const element = document.elementFromPoint(coordinate.x, coordinate.y);
-  if (element instanceof HTMLElement) return element;
-};
-
-// @todo: it seems we only care about whether the area is center or on an edge.
-// Knowing which edge doesn't help much.
-const getArea = (
-  pointerCoordinate: Coordinate,
+const isOnEdge = (
+  { x, y }: { x: number; y: number },
   edgeDistanceThreshold: number,
-  targetRect?: DOMRect
-) => {
-  let area: Area = "center";
-  if (targetRect === undefined) return area;
-  // We are at the edge and this means user wants to insert after that element into its parent
-  if (pointerCoordinate.y - targetRect.top <= edgeDistanceThreshold)
-    area = "top";
-  if (targetRect.bottom - pointerCoordinate.y <= edgeDistanceThreshold)
-    area = "bottom";
-  if (pointerCoordinate.x - targetRect.left <= edgeDistanceThreshold)
-    area = "left";
-  if (targetRect.right - pointerCoordinate.x <= edgeDistanceThreshold)
-    area = "right";
-  return area;
-};
+  targetRect: DOMRect
+) =>
+  Math.min(
+    y - targetRect.top,
+    targetRect.bottom - y,
+    x - targetRect.left,
+    targetRect.right - x
+  ) <= edgeDistanceThreshold;
 
 // @todo: maybe rather than climbing the DOM tree,
 // we should use document.elementsFromPoint() array?
@@ -184,15 +160,15 @@ const findClosestDropTarget = <Data>({
   target,
   isDropTarget,
 }: {
-  root: HTMLElement;
-  target: HTMLElement;
-  isDropTarget: (target: HTMLElement) => Data | false;
+  root: Element;
+  target: Element;
+  isDropTarget: (target: Element) => Data | false;
 }) => {
-  let currentTarget: HTMLElement | null = target;
+  let currentTarget: Element | null = target;
   while (currentTarget !== null) {
     const data = isDropTarget(currentTarget);
     if (data !== false) {
-      return { data: data, element: currentTarget };
+      return { data: data, target: currentTarget };
     }
 
     // @todo: what makes us think that document.elementFromPoint() is inside the root in the first place?
